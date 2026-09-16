@@ -67,6 +67,8 @@ def fake_server():
 class StubLookup:
     """Province lookup stub: valid if a point falls inside its bbox entry."""
 
+    SYNONYMS = {}
+
     def __init__(self, mapping=None):
         self.mapping = mapping or {}
 
@@ -75,6 +77,13 @@ class StubLookup:
             if x0 <= lon <= x1 and y0 <= lat <= y1:
                 return [sigla]
         return []
+
+    def matches(self, declared, lon, lat):
+        if not declared:
+            return bool(self.find(lon, lat))
+        if declared in self.find(lon, lat):
+            return True
+        return any(c in self.find(lon, lat) for c in self.SYNONYMS.get(declared, ()))
 
 
 def test_parse_stations_filters_invalid_coords():
@@ -136,8 +145,13 @@ def test_parse_stations_province_validation():
 def test_parse_stations_in_sea_dropped():
     # declare the province lookup that knows nothing -> both points "in the sea"
     class SeaLookup:
+        SYNONYMS = {}
+
         def find(self, lon, lat):
             return []
+
+        def matches(self, declared, lon, lat):
+            return False
     mimit.set_province_lookup(SeaLookup())
     try:
         stations, _ = mimit.parse_stations(STATIONS_CSV)

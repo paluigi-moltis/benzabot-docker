@@ -148,11 +148,8 @@ def parse_stations(text, validate_provinces=True, deduplicate=True):
         if lookup is not None:
             declared = (row.get("Provincia") or "").strip().upper()
             hits = lookup.find(lon, lat)
-            if declared and declared not in hits:
-                dropped_province += 1
-                continue
-            if not declared and not hits:
-                # no province declared and point in the sea -> drop
+            compatible = lookup.matches(declared, lon, lat) if declared else bool(hits)
+            if not compatible:
                 dropped_province += 1
                 continue
         stations.append(

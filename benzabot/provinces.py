@@ -52,6 +52,24 @@ def _seg_dist(lon, lat, ring):
 
 
 class ProvinceLookup:
+    # Province sigle/names that appear in the MIMIT data but not in the Istat
+    # SIGLA set: renamed or merged provinces, and full-name entries. Each maps
+    # to candidate Istat sigle accepted as a match.
+    SYNONYMS = {
+        "SU": ("VS", "CI", "CA", "SU"),       # Sud Sardegna (ex Medio Campidano / Carbonia-Iglesias)
+        "ROMA": ("RM",),
+        "CARBONIA IGLESIAS": ("CI",),
+        "MEDIO CAMPIDANO": ("VS",),
+        "OLBIA TEMPIO": ("OT",),
+        "OLBIA-TEMPIO": ("OT",),
+        "GALLURA NORD-EST SARDEGNA": ("OT",),
+        # MIMIT keeps pre-2021 sigle for comuni that moved to Sud Sardegna,
+        # and pre-2005 sigle for comuni moved between Sardinian provinces.
+        "SS": ("SS", "OT"),                   # north Sassari comuni now in Olbia-Tempio area
+        "NU": ("NU", "OG", "OT"),             # Nuoro comuni now in Ogliastra
+        "CA": ("CA", "SU"),                   # Cagliari comuni now in Sud Sardegna
+    }
+
     def __init__(self, path=None):
         path = path or os.path.abspath(_DATA)
         with open(path) as fh:
@@ -79,3 +97,14 @@ class ProvinceLookup:
                         near.append(sigla)
                         break
         return near
+
+    def matches(self, declared, lon, lat):
+        """True if the declared province (sigla or name) is compatible with
+        the point: the point is inside/near it, or inside/near a synonym."""
+        hits = self.find(lon, lat)
+        if declared in hits:
+            return True
+        for cand in self.SYNONYMS.get(declared, ()):
+            if cand in hits:
+                return True
+        return False
