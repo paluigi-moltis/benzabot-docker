@@ -18,6 +18,59 @@ ROME_TZ = ZoneInfo("Europe/Rome")
 DEFAULT_INGEST_TIME = "08:30"
 
 
+def deduplicate_stations(stations, prices_by_station):
+    """Resolve groups of stations sharing the exact same coordinate.
+
+    A few hundred registry entries share a point (motorway service areas,
+    duplicated registry rows, same street number). For each coordinate group:
+    - stations without any communicated price are dropped (likely closed or
+      non-reporting duplicates);
+    - if the survivors have *identical* price lists, they are merged into one
+      entry (closest thing to a unique real station);
+    - otherwise all survivors are kept: same point but genuinely different
+      operators/pumps is plausible (the user will see each with its prices).
+
+    Returns (stations, prices) with merged ids removed from prices too.
+    """
+    by_coord = {}
+    for s in stations:
+        by_coord.setdefault((s["lat"], s["lon"]), []).append(s)
+
+    drop_ids = set()
+    for coord, group in by_coord.items():
+        if len(group) < 2:
+            continue
+        with_prices = [s for s in group if prices_by_station.get(s["_id"])]
+        if len(with_prices) < 2:
+            # keep the only one with prices, or if none has prices keep the
+            # group untouched (the bot already skips price-less stations)
+            if len(with_prices) == 1:
+                drop_ids.update(s["_id"] for s in group if s["_id"] != with_prices[0]["_id"])
+            continue
+        def _sig(s):
+            return sorted(
+                (p["carburante"], p["prezzo"], p.get("is_self", False))
+                for p in prices_by_station[s["_id"]]
+            )
+        sigs = {}
+        for s in with_prices:
+            sigs.setdefault(tuple(_sig(s)), []).append(s)
+        for sig, same in sigs.items():
+            if len(same) > 1:
+                # identical price lists at the identical point: keep the first
+                keeper = sorted(same, key=lambda s: s["_id"])[0]
+                drop_ids.update(s["_id"] for s in same if s["_id"] != keeper["_id"])
+    if not drop_ids:
+        return stations, prices_by_station
+    kept = [s for s in stations if s["_id"] not in drop_ids]
+    kept_prices = {k: v for k, v in prices_by_station.items() if k not in drop_ids}
+    logger.info(
+        "Dedup: dropped %d duplicate stations sharing identical coordinates/prices",
+        len(drop_ids),
+    )
+    return kept, kept_prices
+
+
 def run_ingest(store: Store, max_attempts: int = 4):
     """One ingest run: download, parse, atomically replace collections."""
     started = datetime.now(timezone.utc)
@@ -43,9 +96,10 @@ def run_ingest(store: Store, max_attempts: int = 4):
         store.record_ingest(extraction_date, 0, 0, ok=False, error=str(last_error))
         return False
     n_prices = len(prices)
+    stations, prices = deduplicate_stations(stations, prices)
     store.replace_stations(stations)
     store.replace_prices(prices)
-    store.record_ingest(extraction_date, len(stations), n_prices, ok=True)
+    store.record_ingest(extraction_date, len(stations), len(prices), ok=True)
     logger.info(
         "Ingest OK: %d stations, %d stations with prices, estrazione %s (%.1fs)",
         len(stations), n_prices, extraction_date,

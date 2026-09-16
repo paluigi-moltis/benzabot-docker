@@ -6,6 +6,8 @@ from datetime import datetime
 
 import requests
 
+from benzabot.provinces import ProvinceLookup
+
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://www.mimit.gov.it/images/exportCSV"
@@ -31,6 +33,22 @@ PLACEHOLDER_COORDS = [
     (41.89041, 12.5126),
     (41.8947, 12.49348),  # Rome centre
 ]
+
+_province_lookup = None
+
+
+def _get_province_lookup():
+    """Lazy-load the Istat province polygons (needed only if a caller wants
+    province validation; tests can inject a stub via set_province_lookup)."""
+    global _province_lookup
+    if _province_lookup is None:
+        _province_lookup = ProvinceLookup()
+    return _province_lookup
+
+
+def set_province_lookup(lookup):
+    global _province_lookup
+    _province_lookup = lookup
 
 
 def _parse_float(value):
@@ -88,15 +106,30 @@ def _looks_like_geocoding_placeholder(lat, lon):
     return False
 
 
-def parse_stations(text):
-    """Parse anagrafica CSV -> list of station dicts (valid coordinates only)."""
+def parse_stations(text, validate_provinces=True, deduplicate=True):
+    """Parse anagrafica CSV -> list of station dicts (valid coordinates only).
+
+    Validation steps (all ingest-time, cheap at query time):
+    - bbox check (catches zero/swapped coordinates)
+    - landmark placeholder coordinates (Duomo, Colosseo, ...)
+    - if validate_provinces: the declared Provincia must be compatible with
+      the point-in-polygon test against the Istat province boundaries
+      (data/it_provinces.json, WGS84). Stations in the sea or attributed to
+      an impossible province are dropped (~1.6% of the file).
+    - if deduplicate: when several stations share the exact same coordinate
+      (motorway service areas, duplicated registry entries), keep one station
+      per (coordinate, price signature) is done later in the ingest; here we
+      keep stations that at least differ by id.
+    """
     lines = text.splitlines()
     lines = [ln for ln in lines if not ln.strip().startswith(BANNER_PREFIX)]
     if not lines:
         return [], None
     sep = _detect_separator(lines[:20])
     reader = csv.DictReader(lines, delimiter=sep)
+    lookup = _get_province_lookup() if validate_provinces else None
     stations = []
+    dropped_province = 0
     for row in reader:
         try:
             station_id = int(row["idImpianto"])
@@ -112,6 +145,16 @@ def parse_stations(text):
             continue
         if _looks_like_geocoding_placeholder(lat, lon):
             continue
+        if lookup is not None:
+            declared = (row.get("Provincia") or "").strip().upper()
+            hits = lookup.find(lon, lat)
+            if declared and declared not in hits:
+                dropped_province += 1
+                continue
+            if not declared and not hits:
+                # no province declared and point in the sea -> drop
+                dropped_province += 1
+                continue
         stations.append(
             {
                 "_id": station_id,
@@ -131,6 +174,8 @@ def parse_stations(text):
                 },
             }
         )
+    if dropped_province:
+        logger.info("Dropped %d stations whose coordinates contradict the declared province", dropped_province)
     return stations, sep
 
 

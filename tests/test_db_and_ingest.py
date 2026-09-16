@@ -105,7 +105,7 @@ def test_log_request(store, monkeypatch):
 def test_ingest_success_records_status(store, monkeypatch):
     fake_db = FakeDb()
     monkeypatch.setattr(store, "db", fake_db)
-    stations = [{"_id": 1}]
+    stations = [{"_id": 1, "lat": 45.0, "lon": 9.0}]
     prices = {1: [{"carburante": "Benzina", "prezzo": 1.9}]}
     with patch("benzabot.mimit.fetch_dataset", return_value=(stations, prices, None)):
         assert ingest.run_ingest(store) is True
@@ -123,7 +123,7 @@ def test_ingest_retries_then_succeeds(store, monkeypatch):
         calls["n"] += 1
         if calls["n"] < 3:
             raise RuntimeError("boom")
-        return [{"_id": 1}], {1: []}, None
+        return [{"_id": 1, "lat": 45.0, "lon": 9.0}], {1: []}, None
 
     monkeypatch.setattr(time, "sleep", lambda s: None)
     with patch("benzabot.mimit.fetch_dataset", side_effect=flaky):
@@ -148,3 +148,44 @@ def test_ingest_failure_keeps_previous_data_and_flags_status(store, monkeypatch)
 
 def test_parse_hhmm():
     assert ingest.parse_hhmm("08:30") == (8, 30)
+
+
+# --- dedup tests -------------------------------------------------------
+
+def _st(i, lat, lon):
+    return {"_id": i, "lat": lat, "lon": lon, "bandiera": "X"}
+
+
+def test_dedup_drops_priceless_duplicates():
+    stations = [_st(1, 45.0, 9.0), _st(2, 45.0, 9.0), _st(3, 46.0, 9.5)]
+    prices = {1: [{"carburante": "Benzina", "prezzo": 1.9}]}
+    kept, kept_prices = ingest.deduplicate_stations(stations, prices)
+    assert [s["_id"] for s in kept] == [1, 3]
+    assert set(kept_prices) == {1}
+
+
+def test_dedup_merges_identical_prices():
+    p = [{"carburante": "Benzina", "prezzo": 1.9}, {"carburante": "Gasolio", "prezzo": 1.8}]
+    stations = [_st(1, 45.0, 9.0), _st(2, 45.0, 9.0), _st(3, 46.0, 9.5)]
+    prices = {1: p, 2: p, 3: [{"carburante": "GPL", "prezzo": 0.8}]}
+    kept, kept_prices = ingest.deduplicate_stations(stations, prices)
+    assert sorted(s["_id"] for s in kept) == [1, 3]  # 2 merged into 1
+    assert set(kept_prices) == {1, 3}
+
+
+def test_dedup_keeps_different_prices_same_coords():
+    p1 = [{"carburante": "Benzina", "prezzo": 1.9}]
+    p2 = [{"carburante": "Benzina", "prezzo": 1.7}]
+    stations = [_st(1, 45.0, 9.0), _st(2, 45.0, 9.0)]
+    prices = {1: p1, 2: p2}
+    kept, kept_prices = ingest.deduplicate_stations(stations, prices)
+    assert sorted(s["_id"] for s in kept) == [1, 2]
+    assert set(kept_prices) == {1, 2}
+
+
+def test_dedup_ignores_unique_coords():
+    stations = [_st(1, 45.0, 9.0), _st(2, 46.0, 9.5)]
+    prices = {2: [{"carburante": "Benzina", "prezzo": 1.9}]}
+    kept, kept_prices = ingest.deduplicate_stations(stations, prices)
+    assert len(kept) == 2
+    assert set(kept_prices) == {2}

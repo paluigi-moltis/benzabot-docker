@@ -64,8 +64,23 @@ def fake_server():
     server.shutdown()
 
 
+class StubLookup:
+    """Province lookup stub: valid if a point falls inside its bbox entry."""
+
+    def __init__(self, mapping=None):
+        self.mapping = mapping or {}
+
+    def find(self, lon, lat):
+        for sigla, (x0, y0, x1, y1) in self.mapping.items():
+            if x0 <= lon <= x1 and y0 <= lat <= y1:
+                return [sigla]
+        return []
+
+
 def test_parse_stations_filters_invalid_coords():
-    stations, sep = mimit.parse_stations(STATIONS_CSV)
+    mimit.set_province_lookup(None)
+    # disable province validation for the pure-parsing test
+    stations, sep = mimit.parse_stations(STATIONS_CSV, validate_provinces=False)
     assert sep == "|"
     ids = [s["_id"] for s in stations]
     # 60002 swapped lat/lon, 60003 zero coords, 60004 out of bbox,
@@ -97,7 +112,35 @@ def test_legacy_semicolon_separator():
 
 
 def test_fetch_dataset_against_http(fake_server):
+    mimit.set_province_lookup(None)
     stations, prices, extraction = fake_server.fetch_dataset()
     assert extraction == datetime(2026, 9, 14)
     assert len(stations) == 2
     assert 59183 in prices
+
+
+def test_parse_stations_province_validation():
+    # AG (Agrigento) bbox contains 13.59/37.33; MI bbox contains 9.19/45.46;
+    # station 60001 declares MI but sits in AG's bbox -> dropped.
+    stub = StubLookup({"AG": (13.0, 36.5, 14.5, 38.0), "MI": (8.5, 45.0, 9.8, 46.0)})
+    mimit.set_province_lookup(stub)
+    try:
+        stations, _ = mimit.parse_stations(STATIONS_CSV)
+        ids = [s["_id"] for s in stations]
+        # 60001 (MI declared, coords in MI bbox) kept, 59183 (AG) kept
+        assert ids == [59183, 60001]
+    finally:
+        mimit.set_province_lookup(None)
+
+
+def test_parse_stations_in_sea_dropped():
+    # declare the province lookup that knows nothing -> both points "in the sea"
+    class SeaLookup:
+        def find(self, lon, lat):
+            return []
+    mimit.set_province_lookup(SeaLookup())
+    try:
+        stations, _ = mimit.parse_stations(STATIONS_CSV)
+        assert stations == []
+    finally:
+        mimit.set_province_lookup(None)
