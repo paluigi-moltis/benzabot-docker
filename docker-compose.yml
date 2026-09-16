@@ -1,0 +1,24 @@
+services:
+  bot:
+    build: .
+    image: benzabot:latest
+    restart: unless-stopped
+    environment:
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_DB: ${MONGODB_DB:-benzabot}
+      GITHUB_REPO_URL: ${GITHUB_REPO_URL:-https://github.com/paluigi/benzabot-docker}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: Europe/Rome
+
+  ingest:
+    image: benzabot:latest
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "benzabot.ingest"]
+    environment:
+      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_DB: ${MONGODB_DB:-benzabot}
+      INGEST_TIME: ${INGEST_TIME:-08:30}
+      INGEST_JITTER_SECONDS: ${INGEST_JITTER_SECONDS:-900}
+      TZ: Europe/Rome
