@@ -76,11 +76,14 @@ class Store:
 
     # -- queries -----------------------------------------------------------
 
-    def nearest_stations(self, lon, lat, limit=3):
-        """Return up to `limit` stations nearest to (lat, lon), by distance.
+    def nearest_stations(self, lon, lat, limit=3, over_fetch=100):
+        """Return up to `limit` nearest stations that have communicated prices.
 
-        Each result: station dict + 'distance_m' + 'prezzi' list (possibly
-        empty if the station hasn't communicated prices today).
+        Ordered strictly by distance. Stations without any price (~10% of the
+        registry: managers that don't communicate, or actually closed) are
+        excluded, since a price-less station is of no use to the user. To keep
+        true distance ordering we over-fetch geographically, join prices, then
+        take the first `limit`.
         """
         pipeline = [
             {
@@ -91,7 +94,7 @@ class Store:
                     "query": {"location": {"$geoWithin": {"$centerSphere": [[lon, lat], 50_000 / 6_371_000]}}},
                 }
             },
-            {"$limit": limit},
+            {"$limit": over_fetch},
             {
                 "$lookup": {
                     "from": PRICES_COLLECTION,
@@ -101,7 +104,9 @@ class Store:
                 }
             },
             {"$addFields": {"prezzi": {"$ifNull": [{"$arrayElemAt": ["$prezzi_doc.prezzi", 0]}, []]}}},
+            {"$match": {"prezzi.0": {"$exists": True}}},
             {"$project": {"prezzi_doc": 0}},
+            {"$limit": limit},
         ]
         stations = list(self.db[STATIONS_COLLECTION].aggregate(pipeline))
         return stations
