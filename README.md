@@ -61,7 +61,12 @@ This starts two containers from the same image:
 
 ## Data quality notes
 
-- Coordinates come from the station managers and are generally good, but the source contains a small number of broken entries (swapped or zero lat/lon, and ~400/24k stations sharing lazy-geocoding placeholder coordinates such as Milan Duomo or Rome Colosseum). These are filtered out at ingest time.
+- Coordinates come from the station managers and are generally good, but the source contains a small number of broken entries. At ingest time the bot:
+  - drops rows with missing/zero/swapped coordinates, or outside the Italy bounding box;
+  - drops the ~15 stations sitting on lazy-geocoding landmark coordinates (Milan Duomo, Rome Colosseum, …) claimed by unrelated stations;
+  - validates that the declared province is compatible with the coordinates, using [Istat province boundaries](https://www.istat.it/notizia/confini-delle-unita-amministrative-a-fini-statistici-al-1-gennaio-2018-2) (`data/it_provinces.json`, built by `scripts/build_province_lookup.py`, reprojected to WGS84 lon/lat): stations in the sea or attributed to an impossible province are dropped (~1.6%);
+  - deduplicates groups of stations sharing the exact same coordinate: price-less duplicates are dropped, survivors with identical price lists are merged; genuinely different operators at one point (e.g. motorway service areas) are kept.
+- Stations without any communicated price are excluded from the /query results (~10% of the registry: managers that don't communicate, or effectively closed pumps).
 - Since 2026-02-10 MIMIT uses `|` as CSV field separator (previously `;`) — the parser auto-detects it.
 - Published data reflects prices "in vigore alle 8 del giorno precedente"; each price row carries its own `dtComu` timestamp.
 
