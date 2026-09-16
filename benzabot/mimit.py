@@ -19,10 +19,12 @@ BANNER_PREFIX = "Estrazione del "
 # (the open data is known to contain swapped/zero lat-lon pairs).
 IT_BBOX = {"lat_min": 35.0, "lat_max": 47.5, "lon_min": 6.0, "lon_max": 19.0}
 
-# Coordinates that several unrelated stations share in the MIMIT data: these
-# are lazy-geocoding placeholders (famous landmarks), not real positions.
-# Note: this only affects ~400 out of ~24k stations — coordinates are
-# otherwise good quality, as they come from the station managers themselves.
+# Coordinates claimed by stations with mutually incompatible addresses
+# (different streets, even different towns): lazy-geocoding fallbacks to
+# famous landmarks. Verified in the source data, e.g. three unrelated
+# stations at exactly Milan Duomo's coords, five at Rome Colosseum's.
+# Only landmarks are filtered: other coordinate-sharing groups are mostly
+# genuine (motorway service areas, same-address duplicates).
 PLACEHOLDER_COORDS = [
     (45.4642035, 9.189982),  # Milan Duomo
     (41.8904, 12.5126),  # Rome Colosseum
